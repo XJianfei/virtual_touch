@@ -5,14 +5,16 @@
 #include <linux/module.h>
 #include <linux/time.h>
 #include <linux/platform_device.h>
-#include <linux/rtc.h>
+#include <linux/string.h>
 
 #include <linux/input.h> 
+#include <linux/input/mt.h>
 #include <linux/miscdevice.h>
 #include <linux/cdev.h>
 #include <linux/semaphore.h>
 
 #include <linux/delay.h>
+#include <asm/uaccess.h>
 
 #define DEV_NAME  "vtouch"
 #define INPUT_DEVICE_NAME   "virtual_touch"
@@ -26,6 +28,7 @@ struct virtual_touch_dev {
 };
 
 static struct virtual_touch_dev ts;
+static int maxcontacts = 1;
 
 static int touch_open(struct inode *inode, struct file *filp)
 {
@@ -47,15 +50,147 @@ static ssize_t touch_read(struct file *filp, char __user *buf, size_t size, loff
     return 0;
 }
 
+static int strtoul(const char *s, unsigned int base, unsigned long *res)
+{
+    int i;
+    char *src = s;
+    char num[32];
+    i = 0;
+    while (*src != '\0' && *src != ' ' && 
+            *src >= '0' && *src <= '9') {
+        num[i] = *src;
+        i++;
+        src++;
+    }
+    num[i] = '\0';
+    return kstrtoul(num, base, res);
+}
+
+static int strtoula(const char *s, unsigned int base, unsigned long *res, int size)
+{
+    char *cur = s;
+    int ret, value;
+    int count = 0;
+    while (size) {
+        ret = strtoul(cur, base, &value);
+        if (ret < 0) {
+            return count;
+        }
+        res[count] = value;
+        /*printk("[%d]", res[count]);*/
+        count++;
+        size--;
+        cur = strstr(cur, " ");
+        if (cur == NULL) {
+            return count;
+        }
+        cur++;
+    }
+    return count;
+}
+
 ssize_t touch_write(struct file *filp, const char __user *buf, size_t size, loff_t *ppos)
 {
     char data[65];
-    if (size > 64) {
+    char userdata[256];
+    char *token, *cur;
+    int i, ret;
+    int coor[10][2];
+    unsigned long value;
+#if 1
+    if (size > 256) {
         return -EINVAL;
     }
-    if (copy_from_user(data, buf, size)) {
+    if (copy_from_user(userdata, buf, size)) {
         return -EFAULT;
     }
+    cur = userdata;
+    printk("---------------------------------\n");
+    unsigned long co[40];
+    ret = strtoula(userdata, 10, co, 40);
+#if 1
+    printk("strtoula reteurn %d\n", ret);
+    for (i = 0; i < ret; i++) {
+        printk("|%d|", co[i]);
+    }
+#endif
+
+#if 1
+        /*printk("----i = %d\n", i);*/
+    i = 0;
+    int point = ret >> 2;
+    while (i < point) {
+        /*printk("i = %d\n", i);*/
+        input_report_key(ts.input, BTN_TOUCH, co[(i << 2) + 1]);
+        input_report_abs(ts.input, ABS_MT_TRACKING_ID, co[i << 2]);
+        input_event(ts.input, EV_ABS, ABS_MT_POSITION_X, co[(i << 2) + 2]);
+        input_event(ts.input, EV_ABS, ABS_MT_POSITION_Y, co[(i << 2) + 3]);
+        i++;
+        input_mt_sync(ts.input);
+    }
+    input_sync(ts.input);
+    /*i = 0;*/
+    /*while (i < ret) {*/
+        /*[>printk("i = %d\n", i);<]*/
+        /*input_report_key(ts.input, BTN_TOUCH, 0);*/
+        /*input_report_abs(ts.input, ABS_MT_TRACKING_ID, i + 12);*/
+        /*input_event(ts.input, EV_ABS, ABS_MT_POSITION_X, coor[i][0]);*/
+        /*input_event(ts.input, EV_ABS, ABS_MT_POSITION_Y, coor[i][1]);*/
+        /*i++;*/
+        /*input_mt_sync(ts.input);*/
+    /*}*/
+    /*input_sync(ts.input);*/
+#endif
+#if 0
+    for (i = 0; i < maxcontacts; i++) {
+        input_report_key(ts.input, BTN_TOUCH, 1);
+        input_report_abs(ts.input, ABS_MT_TRACKING_ID, i + 12);
+        input_event(ts.input, EV_ABS, ABS_MT_POSITION_X, 512 + i * 100);
+        input_event(ts.input, EV_ABS, ABS_MT_POSITION_Y, 512 + i * 100);
+        input_mt_sync(ts.input);
+    }
+    input_sync(ts.input);
+
+    for (i = 0; i < maxcontacts; i++) {
+        input_report_key(ts.input, BTN_TOUCH, 0);
+        input_report_abs(ts.input, ABS_MT_TRACKING_ID, i + 12);
+        input_event(ts.input, EV_ABS, ABS_MT_POSITION_X, 512 + i * 100);
+        input_event(ts.input, EV_ABS, ABS_MT_POSITION_Y, 512 + i * 100);
+        input_mt_sync(ts.input);
+    }
+    input_sync(ts.input);
+    maxcontacts--;
+    if (maxcontacts == 0) {
+        maxcontacts = 10;
+    }
+#endif
+
+#if 0
+    for (i = 0; i < maxcontacts; i++) {
+        input_mt_slot(ts.input, i);
+        /*touch_dbg("... %i\n", i);*/
+        input_mt_report_slot_state(ts.input, MT_TOOL_FINGER, 1);
+        input_event(ts.input, EV_ABS, ABS_MT_POSITION_X, 512 + i * 100);
+        input_event(ts.input, EV_ABS, ABS_MT_POSITION_Y, 512 + i * 100);
+        input_event(ts.input, EV_ABS, ABS_MT_PRESSURE, 100);
+    }
+    input_mt_report_pointer_emulation(ts.input, true);
+    input_sync(ts.input);
+
+    for (i = 0; i < maxcontacts; i++) {
+        input_mt_slot(ts.input, i);
+        /*touch_dbg("... %i\n", i);*/
+        input_mt_report_slot_state(ts.input, MT_TOOL_FINGER, 0);
+        /*input_event(ts.input, EV_ABS, ABS_MT_POSITION_X, 512 + i * 100);*/
+        /*input_event(ts.input, EV_ABS, ABS_MT_POSITION_Y, 512 + i * 100);*/
+    }
+    input_mt_report_pointer_emulation(ts.input, true);
+    input_sync(ts.input);
+#endif
+
+#endif //
+#if 0
+    /* single touch  */
     data[64] = '\0';
     input_report_abs(ts.input, ABS_X, 512);
     input_report_abs(ts.input, ABS_Y, 512);
@@ -74,7 +209,8 @@ ssize_t touch_write(struct file *filp, const char __user *buf, size_t size, loff
     mdelay(100);
     input_report_key(ts.input, BTN_TOUCH, 0);
     input_sync(ts.input);
-    touch_dbg("write: %s\n", data);
+#endif
+    /*touch_dbg(".. write: %s\n\n", data);*/
     return size;
 }
 
@@ -116,8 +252,13 @@ static int virtual_touch_init(void)
     __set_bit(EV_SYN, input_dev->evbit);
 
     __set_bit(BTN_TOUCH, input_dev->keybit);
-    input_set_abs_params(input_dev, ABS_X, 0, 0x3FF, 0, 0);
-    input_set_abs_params(input_dev, ABS_Y, 0, 0x3FF, 0, 0);
+    input_set_abs_params(input_dev, ABS_X, 0, 1920, 0, 0);
+    input_set_abs_params(input_dev, ABS_Y, 0, 1080, 0, 0);
+    input_set_abs_params(input_dev, ABS_MT_POSITION_X, 0, 1920, 0, 0);
+    input_set_abs_params(input_dev, ABS_MT_POSITION_Y, 0, 1080, 0, 0);
+    /*input_set_abs_params(input_dev, ABS_MT_PRESSURE, 0, 0x3FF, 0, 0);*/
+    maxcontacts = 10;
+    /*input_mt_init_slots(input_dev, maxcontacts);*/
     input_dev->name = "virtual_touch";
     input_dev->id.bustype = BUS_HOST;
     input_dev->id.vendor = 0x1ff7;
